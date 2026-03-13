@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+*.egg-info/
+ca-cert.pem
+ca-key.pem
+*.pem
+SEASON_DATA_CACHE.JSON
