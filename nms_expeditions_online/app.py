@@ -183,7 +183,7 @@ def do_run():
 
     print("Starting proxy server...\n")
     try:
-        thread, stop_event = proxy_module.start_proxy(exp_file, app_dir, port=443)
+        thread, stop_event = proxy_module.start_proxy(exp_file, port=443)
     except Exception as e:
         print(f"\nERROR: {e}")
         input("\nPress Enter to return to menu...")

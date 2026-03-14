@@ -24,17 +24,9 @@ _sni_map: dict[int, str] = {}
 REAL_IPS: dict[str, str] = {}
 
 
-def init_ca(ca_dir: str):
-    """Load or generate the CA certificate."""
+def init_ca():
+    """Generate an ephemeral CA certificate (in-memory only)."""
     global _ca_key, _ca_cert
-    ca_cert_path = Path(ca_dir) / "ca-cert.pem"
-    ca_key_path = Path(ca_dir) / "ca-key.pem"
-
-    if ca_cert_path.exists() and ca_key_path.exists():
-        _ca_key = serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None)
-        _ca_cert = x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
-        return
-
     _ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "NMS Expedition Proxy CA")])
     _ca_cert = (
@@ -43,13 +35,10 @@ def init_ca(ca_dir: str):
         .public_key(_ca_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3650))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(_ca_key, hashes.SHA256())
     )
-    ca_key_path.write_bytes(_ca_key.private_bytes(
-        serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
-    ca_cert_path.write_bytes(_ca_cert.public_bytes(serialization.Encoding.PEM))
 
 
 def _make_host_cert(hostname: str) -> tuple[str, str]:
@@ -307,7 +296,7 @@ async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
     await asyncio.gather(server.serve_forever(), watch_stop(), return_exceptions=True)
 
 
-def start_proxy(expedition_path: str, ca_dir: str, port: int = 443) -> tuple[threading.Thread, threading.Event]:
+def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread, threading.Event]:
     """Start the proxy in a background thread. Returns (thread, stop_event)."""
     global REAL_IPS
 
@@ -316,7 +305,7 @@ def start_proxy(expedition_path: str, ca_dir: str, port: int = 443) -> tuple[thr
     for hostname, ip in REAL_IPS.items():
         print(f"  {hostname} -> {ip}")
 
-    init_ca(ca_dir)
+    init_ca()
     proxy = NMSProxy(expedition_path)
     print(f"Loaded expedition: SeasonId={proxy.meta['SeasonId']}")
 
