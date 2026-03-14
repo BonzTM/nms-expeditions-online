@@ -20,9 +20,12 @@ def require_admin():
     if is_windows():
         import ctypes
         import subprocess
-        ctypes.windll.shell32.ShellExecuteW(
+        result = ctypes.windll.shell32.ShellExecuteW(
             None, "runas", sys.executable, subprocess.list2cmdline(sys.argv), None, 1
         )
+        if result <= 32:
+            print("ERROR: Failed to elevate to administrator.")
+            sys.exit(1)
         sys.exit(0)
     else:
         print("ERROR: This program must be run as root (sudo).")

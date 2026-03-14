@@ -103,7 +103,14 @@ async def read_http(reader: asyncio.StreamReader) -> bytes:
             return headers + body
 
     if "transfer-encoding: chunked" in hdrs_lower:
-        while not body.endswith(b"0\r\n\r\n"):
+        # Chunked encoding ends with "0\r\n" followed by optional trailers and "\r\n"
+        while b"\r\n0\r\n" not in body and not body.startswith(b"0\r\n"):
+            chunk = await reader.read(8192)
+            if not chunk:
+                break
+            body += chunk
+        # Read until the final \r\n\r\n that terminates trailers (or the zero chunk)
+        while not body.endswith(b"\r\n\r\n"):
             chunk = await reader.read(8192)
             if not chunk:
                 break
@@ -179,7 +186,6 @@ class NMSProxy:
         return None
 
     async def handle(self, client_r: asyncio.StreamReader, client_w: asyncio.StreamWriter):
-        peer = client_w.get_extra_info("peername")
         hostname = getattr(client_w, "_nms_hostname", None)
         if not hostname:
             ssl_obj = client_w.get_extra_info("ssl_object")
@@ -195,44 +201,50 @@ class NMSProxy:
         real_ip = REAL_IPS[hostname]
 
         try:
-            req = await asyncio.wait_for(read_http(client_r), timeout=30)
-            if not req:
-                return
+            while True:
+                req = await asyncio.wait_for(read_http(client_r), timeout=30)
+                if not req:
+                    return
 
-            first_line = req.split(b"\r\n")[0].decode("utf-8", errors="replace")
-            parts = first_line.split(" ", 2)
-            path = parts[1] if len(parts) > 1 else "/"
-            print(f"  {parts[0]} https://{hostname}{path}")
+                first_line = req.split(b"\r\n")[0].decode("utf-8", errors="replace")
+                parts = first_line.split(" ", 2)
+                path = parts[1] if len(parts) > 1 else "/"
+                print(f"  {parts[0]} https://{hostname}{path}")
 
-            up_ctx = ssl.create_default_context()
-            up_r, up_w = await asyncio.wait_for(
-                asyncio.open_connection(real_ip, 443, ssl=up_ctx, server_hostname=hostname),
-                timeout=15,
-            )
+                up_ctx = ssl.create_default_context()
+                up_r, up_w = await asyncio.wait_for(
+                    asyncio.open_connection(real_ip, 443, ssl=up_ctx, server_hostname=hostname),
+                    timeout=15,
+                )
 
-            up_w.write(req)
-            await up_w.drain()
+                up_w.write(req)
+                await up_w.drain()
 
-            resp = await asyncio.wait_for(read_http(up_r), timeout=30)
+                resp = await asyncio.wait_for(read_http(up_r), timeout=30)
 
-            hdr_end = resp.find(b"\r\n\r\n")
-            if hdr_end >= 0:
-                hdrs = resp[:hdr_end + 4]
-                body = resp[hdr_end + 4:]
-                was_chunked = b"transfer-encoding: chunked" in hdrs.lower()
-                if was_chunked:
-                    body = decode_chunked(body)
-                modified = self.maybe_modify(hostname, path, body)
-                if modified is not None:
-                    resp = rebuild_response(hdrs, modified, force_200=True)
-                elif was_chunked:
-                    resp = rebuild_response(hdrs, body)
+                up_w.close()
+                await up_w.wait_closed()
 
-            client_w.write(resp)
-            await client_w.drain()
+                hdr_end = resp.find(b"\r\n\r\n")
+                if hdr_end >= 0:
+                    hdrs = resp[:hdr_end + 4]
+                    body = resp[hdr_end + 4:]
+                    was_chunked = b"transfer-encoding: chunked" in hdrs.lower()
+                    if was_chunked:
+                        body = decode_chunked(body)
+                    modified = self.maybe_modify(hostname, path, body)
+                    if modified is not None:
+                        resp = rebuild_response(hdrs, modified, force_200=True)
+                    elif was_chunked:
+                        resp = rebuild_response(hdrs, body)
 
-            up_w.close()
-            await up_w.wait_closed()
+                client_w.write(resp)
+                await client_w.drain()
+
+                # Check if client wants to close
+                hdrs_lower = req.split(b"\r\n\r\n")[0].lower()
+                if b"connection: close" in hdrs_lower:
+                    return
 
         except asyncio.TimeoutError:
             pass
@@ -268,11 +280,6 @@ async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
 
             ssl_obj = new_transport.get_extra_info("ssl_object")
             hostname = _sni_map.pop(id(ssl_obj), None)
-            if not hostname:
-                for sid, sname in list(_sni_map.items()):
-                    hostname = sname
-                    del _sni_map[sid]
-                    break
 
             reader._transport = new_transport
             writer._transport = new_transport
