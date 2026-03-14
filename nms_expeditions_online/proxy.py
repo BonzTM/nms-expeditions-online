@@ -67,6 +67,8 @@ def get_server_ssl_ctx(hostname: str) -> ssl.SSLContext:
         cert_path, key_path = _make_host_cert(hostname)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(cert_path, key_path)
+        os.unlink(cert_path)
+        os.unlink(key_path)
         _ssl_ctx_cache[hostname] = ctx
     return _ssl_ctx_cache[hostname]
 
@@ -116,7 +118,8 @@ def decode_chunked(data: bytes) -> bytes:
     while pos < len(data):
         end = data.find(b"\r\n", pos)
         if end < 0: break
-        size = int(data[pos:end].decode("ascii", errors="replace").strip(), 16)
+        size_str = data[pos:end].decode("ascii", errors="replace").split(";")[0].strip()
+        size = int(size_str, 16)
         if size == 0: break
         pos = end + 2
         result += data[pos:pos + size]
@@ -194,8 +197,6 @@ class NMSProxy:
             print(f"  {parts[0]} https://{hostname}{path}")
 
             up_ctx = ssl.create_default_context()
-            up_ctx.check_hostname = False
-            up_ctx.verify_mode = ssl.CERT_NONE
             up_r, up_w = await asyncio.wait_for(
                 asyncio.open_connection(real_ip, 443, ssl=up_ctx, server_hostname=hostname),
                 timeout=15,
@@ -243,6 +244,8 @@ async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
     default_cert, default_key = _make_host_cert("nomanssky.com")
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(default_cert, default_key)
+    os.unlink(default_cert)
+    os.unlink(default_key)
     ctx.sni_callback = sni_callback
 
     async def raw_handler(reader, writer):
@@ -251,13 +254,8 @@ async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
             transport = writer.transport
             loop = asyncio.get_event_loop()
 
-            tls_default_cert, tls_default_key = _make_host_cert("nomanssky.com")
-            tls_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            tls_ctx.load_cert_chain(tls_default_cert, tls_default_key)
-            tls_ctx.sni_callback = sni_callback
-
             new_transport = await loop.start_tls(
-                transport, transport.get_protocol(), tls_ctx, server_side=True,
+                transport, transport.get_protocol(), ctx, server_side=True,
             )
 
             ssl_obj = new_transport.get_extra_info("ssl_object")
