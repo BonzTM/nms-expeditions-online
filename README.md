@@ -40,12 +40,43 @@ No Man's Sky checks Hello Games' servers on startup to determine which expeditio
 
 #### Linux
 
-1. Download and extract the Linux release from the [Releases](../../releases) page, or clone this repository
+**Prerequisites:** Python 3.10+ (most distros ship with this)
+
+**Option A — One command:**
+
+1. [Download and extract the latest Linux release](https://github.com/BonzTM/nms-expeditions-online/releases/latest)
 2. Place `SEASON_DATA_CACHE.JSON` in the project directory
 3. Run:
    ```bash
+   ./run.sh
+   ```
+   This handles sudo elevation, checks for Python, installs dependencies if needed, and starts the app.
+
+**Option B — pip install:**
+
+1. [Download and extract the latest Linux release](https://github.com/BonzTM/nms-expeditions-online/releases/latest)
+2. Place `SEASON_DATA_CACHE.JSON` in the project directory
+3. Install and run:
+   ```bash
+   pip install .
+   sudo -E nms-expeditions-online
+   ```
+
+**Option C — Run directly:**
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/BonzTM/nms-expeditions-online.git
    cd nms-expeditions-online
-   sudo python3 -m nms_expeditions_online
+   ```
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Place `SEASON_DATA_CACHE.JSON` in the project directory
+4. Run:
+   ```bash
+   sudo -E python3 -m nms_expeditions_online
    ```
 
 ### Step 3: Install
