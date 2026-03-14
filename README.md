@@ -62,23 +62,6 @@ No Man's Sky checks Hello Games' servers on startup to determine which expeditio
    sudo -E nms-expeditions-online
    ```
 
-**Option C — Run directly:**
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/BonzTM/nms-expeditions-online.git
-   cd nms-expeditions-online
-   ```
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Place `SEASON_DATA_CACHE.JSON` in the project directory
-4. Run:
-   ```bash
-   sudo -E python3 -m nms_expeditions_online
-   ```
-
 ### Step 3: Install
 
 1. Select **option 1 (Install)** from the menu
