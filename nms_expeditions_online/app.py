@@ -4,9 +4,7 @@ import glob
 import os
 import sys
 
-import shutil
-
-from nms_expeditions_online.platform_utils import require_admin, get_app_dir, find_nms_dir
+from nms_expeditions_online.platform_utils import require_admin, get_app_dir
 from nms_expeditions_online import hosts
 from nms_expeditions_online import proxy as proxy_module
 
@@ -82,13 +80,6 @@ def print_status():
     else:
         print(f"  Expedition:  No JSON file found")
 
-    nms_dir = find_nms_dir()
-    if nms_dir:
-        cache_in_game = os.path.isfile(os.path.join(nms_dir, EXPEDITION_FILENAME))
-        print(f"  NMS dir:     {nms_dir}")
-        print(f"  Game cache:  {'INSTALLED' if cache_in_game else 'Not installed'}")
-    else:
-        print(f"  NMS dir:     Not found")
     print()
 
 
@@ -138,22 +129,6 @@ def do_install():
         return
 
     print("\nHosts file updated successfully.")
-
-    # Copy expedition file into NMS game directory
-    nms_dir = find_nms_dir()
-    if nms_dir:
-        dest = os.path.join(nms_dir, EXPEDITION_FILENAME)
-        try:
-            shutil.copy2(exp_file, dest)
-            print(f"Expedition file copied to: {dest}")
-        except Exception as e:
-            print(f"WARNING: Could not copy expedition file to game directory: {e}")
-            print(f"You may need to manually copy {os.path.basename(exp_file)} to:")
-            print(f"  {nms_dir}")
-    else:
-        print("\nWARNING: Could not find No Man's Sky installation directory.")
-        print("You may need to manually copy the expedition file to your NMS game folder.")
-
     input("\nPress Enter to return to menu...")
 
 
@@ -190,18 +165,6 @@ def do_uninstall():
         return
 
     print("\nHosts file restored successfully.")
-
-    # Remove expedition file from NMS game directory
-    nms_dir = find_nms_dir()
-    if nms_dir:
-        dest = os.path.join(nms_dir, EXPEDITION_FILENAME)
-        if os.path.isfile(dest):
-            try:
-                os.remove(dest)
-                print(f"Expedition file removed from game directory.")
-            except Exception as e:
-                print(f"WARNING: Could not remove expedition file: {e}")
-
     input("\nPress Enter to return to menu...")
 
 
@@ -220,8 +183,6 @@ def do_run():
         print("No expedition JSON file found.\n")
         input("Press Enter to return to menu...")
         return
-
-    app_dir = get_app_dir()
 
     print("Starting proxy server...\n")
     try:

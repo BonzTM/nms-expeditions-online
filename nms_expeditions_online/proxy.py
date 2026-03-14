@@ -127,10 +127,18 @@ def decode_chunked(data: bytes) -> bytes:
     return result
 
 
-def rebuild_response(headers: bytes, body: bytes) -> bytes:
+def rebuild_response(headers: bytes, body: bytes, force_200: bool = False) -> bytes:
     lines = headers.decode("utf-8", errors="replace").rstrip("\r\n").split("\r\n")
+    if force_200 and lines:
+        # Replace status line (e.g. "HTTP/1.1 204 No Content" -> "HTTP/1.1 200 OK")
+        parts = lines[0].split(" ", 2)
+        if len(parts) >= 2:
+            lines[0] = f"{parts[0]} 200 OK"
     out = [l for l in lines if not l.lower().startswith(("content-length:", "transfer-encoding:"))]
     out.append(f"Content-Length: {len(body)}")
+    # Ensure Content-Type is present when we're injecting a body into a 204
+    if force_200 and not any(l.lower().startswith("content-type:") for l in out):
+        out.insert(1, "Content-Type: application/json; charset=utf-8")
     return "\r\n".join(out).encode() + b"\r\n\r\n" + body
 
 
@@ -216,7 +224,7 @@ class NMSProxy:
                     body = decode_chunked(body)
                 modified = self.maybe_modify(hostname, path, body)
                 if modified is not None:
-                    resp = rebuild_response(hdrs, modified)
+                    resp = rebuild_response(hdrs, modified, force_200=True)
                 elif was_chunked:
                     resp = rebuild_response(hdrs, body)
 
