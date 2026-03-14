@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Play old No Man's Sky expeditions online with full multiplayer"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = "AGPL3"
 dependencies = [
     "cryptography",
 ]
