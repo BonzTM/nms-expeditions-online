@@ -1,7 +1,7 @@
 """HTTPS reverse proxy that intercepts NMS season data and auth responses."""
 
-import asyncio
 import datetime
+import http.server
 import json
 import os
 import platform
@@ -20,15 +20,16 @@ from nms_expeditions_online.dns_resolve import resolve_all
 
 _ca_key = None
 _ca_cert = None
-_ssl_ctx_cache: dict[str, ssl.SSLContext] = {}
+_ca_crl_der: bytes = b""
 _sni_map: dict[int, str] = {}
 
+CRL_PORT = 18625
 REAL_IPS: dict[str, str] = {}
 
 
 def init_ca():
-    """Generate an ephemeral CA certificate (in-memory only)."""
-    global _ca_key, _ca_cert
+    """Generate an ephemeral CA certificate and CRL (in-memory only)."""
+    global _ca_key, _ca_cert, _ca_crl_der
     _ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "NMS Expedition Proxy CA")])
     _ca_cert = (
@@ -41,6 +42,16 @@ def init_ca():
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(_ca_key, hashes.SHA256())
     )
+
+    # Generate an empty CRL so SChannel revocation checks pass
+    now = datetime.datetime.now(datetime.timezone.utc)
+    _ca_crl_der = (
+        x509.CertificateRevocationListBuilder()
+        .issuer_name(_ca_cert.subject)
+        .last_update(now)
+        .next_update(now + datetime.timedelta(days=1))
+        .sign(_ca_key, hashes.SHA256())
+    ).public_bytes(serialization.Encoding.DER)
 
 
 CA_CERT_NAME = "NMS Expedition Proxy CA"
@@ -81,17 +92,29 @@ def uninstall_ca_cert():
         )
 
 
-def _make_host_cert(hostname: str) -> tuple[str, str]:
+def _make_server_cert() -> tuple[str, str]:
+    """Create a single server cert covering all NMS hostnames."""
+    from nms_expeditions_online.dns_resolve import NMS_HOSTNAMES
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    san_names = [x509.DNSName(h) for h in NMS_HOSTNAMES]
     cert = (
         x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)]))
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "nomanssky.com")]))
         .issuer_name(_ca_cert.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
         .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]), critical=False)
+        .add_extension(x509.SubjectAlternativeName(san_names), critical=False)
+        .add_extension(
+            x509.CRLDistributionPoints([
+                x509.DistributionPoint(
+                    full_name=[x509.UniformResourceIdentifier(f"http://127.0.0.1:{CRL_PORT}/crl")],
+                    relative_name=None, reasons=None, crl_issuer=None,
+                )
+            ]),
+            critical=False,
+        )
         .sign(_ca_key, hashes.SHA256())
     )
     cf = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
@@ -102,27 +125,52 @@ def _make_host_cert(hostname: str) -> tuple[str, str]:
     return cf.name, kf.name
 
 
-def get_server_ssl_ctx(hostname: str) -> ssl.SSLContext:
-    if hostname not in _ssl_ctx_cache:
-        cert_path, key_path = _make_host_cert(hostname)
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(cert_path, key_path)
-        os.unlink(cert_path)
-        os.unlink(key_path)
-        _ssl_ctx_cache[hostname] = ctx
-    return _ssl_ctx_cache[hostname]
-
-
-def sni_callback(ssl_socket, hostname, _ctx):
+def _sni_hostname_callback(ssl_socket, hostname, _ctx):
+    """Extract the SNI hostname without switching contexts."""
     if hostname:
-        ssl_socket.context = get_server_ssl_ctx(hostname)
         _sni_map[id(ssl_socket)] = hostname
 
 
-async def read_http(reader: asyncio.StreamReader) -> bytes:
+class _CRLHandler(http.server.BaseHTTPRequestHandler):
+    """Serves the CA's CRL for SChannel revocation checks."""
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pkix-crl")
+        self.send_header("Content-Length", str(len(_ca_crl_der)))
+        self.end_headers()
+        self.wfile.write(_ca_crl_der)
+
+    def log_message(self, format, *args):
+        pass  # suppress request logging
+
+
+def _start_crl_server() -> http.server.HTTPServer | None:
+    """Start a tiny HTTP server that serves the CRL. Windows only."""
+    if platform.system() != "Windows":
+        return None
+    server = http.server.HTTPServer(("127.0.0.1", CRL_PORT), _CRLHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    return server
+
+
+def _recv_all(sock, n: int) -> bytes:
+    """Receive exactly n bytes from a socket."""
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(min(65536, n - len(buf)))
+        if not chunk:
+            return buf
+        buf += chunk
+    return buf
+
+
+def read_http_sync(sock) -> bytes:
+    """Read a complete HTTP request or response from a socket."""
     buf = b""
     while b"\r\n\r\n" not in buf:
-        chunk = await reader.read(8192)
+        chunk = sock.recv(8192)
         if not chunk:
             return buf
         buf += chunk
@@ -135,23 +183,19 @@ async def read_http(reader: asyncio.StreamReader) -> bytes:
     for line in hdrs_lower.split("\r\n"):
         if line.startswith("content-length:"):
             cl = int(line.split(":", 1)[1].strip())
-            while len(body) < cl:
-                chunk = await reader.read(min(65536, cl - len(body)))
-                if not chunk:
-                    break
-                body += chunk
+            remaining = cl - len(body)
+            if remaining > 0:
+                body += _recv_all(sock, remaining)
             return headers + body
 
     if "transfer-encoding: chunked" in hdrs_lower:
-        # Chunked encoding ends with "0\r\n" followed by optional trailers and "\r\n"
         while b"\r\n0\r\n" not in body and not body.startswith(b"0\r\n"):
-            chunk = await reader.read(8192)
+            chunk = sock.recv(8192)
             if not chunk:
                 break
             body += chunk
-        # Read until the final \r\n\r\n that terminates trailers (or the zero chunk)
         while not body.endswith(b"\r\n\r\n"):
-            chunk = await reader.read(8192)
+            chunk = sock.recv(8192)
             if not chunk:
                 break
             body += chunk
@@ -177,13 +221,11 @@ def decode_chunked(data: bytes) -> bytes:
 def rebuild_response(headers: bytes, body: bytes, force_200: bool = False) -> bytes:
     lines = headers.decode("utf-8", errors="replace").rstrip("\r\n").split("\r\n")
     if force_200 and lines:
-        # Replace status line (e.g. "HTTP/1.1 204 No Content" -> "HTTP/1.1 200 OK")
         parts = lines[0].split(" ", 2)
         if len(parts) >= 2:
             lines[0] = f"{parts[0]} 200 OK"
     out = [l for l in lines if not l.lower().startswith(("content-length:", "transfer-encoding:"))]
     out.append(f"Content-Length: {len(body)}")
-    # Ensure Content-Type is present when we're injecting a body into a 204
     if force_200 and not any(l.lower().startswith("content-type:") for l in out):
         out.insert(1, "Content-Type: application/json; charset=utf-8")
     return "\r\n".join(out).encode() + b"\r\n\r\n" + body
@@ -191,7 +233,7 @@ def rebuild_response(headers: bytes, body: bytes, force_200: bool = False) -> by
 
 class NMSProxy:
     def __init__(self, expedition_path: str):
-        with open(expedition_path) as f:
+        with open(expedition_path, encoding="utf-8") as f:
             data = json.load(f)
         self.meta = {
             "SeasonId": data.get("SeasonId", 0),
@@ -225,28 +267,13 @@ class NMSProxy:
                 print(f"  [ERROR] Auth patch: {e}")
         return None
 
-    async def handle(self, client_r: asyncio.StreamReader, client_w: asyncio.StreamWriter):
-        hostname = getattr(client_w, "_nms_hostname", None)
-        if not hostname:
-            ssl_obj = client_w.get_extra_info("ssl_object")
-            hostname = _sni_map.pop(id(ssl_obj), None) if ssl_obj else None
-
-        if not hostname or hostname not in REAL_IPS:
-            if not hostname:
-                print("  [WARN] Connection with no SNI hostname, closing")
-            else:
-                print(f"  [WARN] Unknown hostname '{hostname}', closing")
-            try:
-                client_w.close()
-            except Exception:
-                pass
-            return
-
+    def handle(self, client_ssl, hostname: str):
+        """Handle a single client connection (blocking, runs in its own thread)."""
         real_ip = REAL_IPS[hostname]
 
         try:
             while True:
-                req = await asyncio.wait_for(read_http(client_r), timeout=30)
+                req = read_http_sync(client_ssl)
                 if not req:
                     return
 
@@ -255,21 +282,16 @@ class NMSProxy:
                 path = parts[1] if len(parts) > 1 else "/"
                 print(f"  {parts[0]} https://{hostname}{path}")
 
+                # Connect to real upstream server
                 up_ctx = ssl.create_default_context()
-                up_r, up_w = await asyncio.wait_for(
-                    asyncio.open_connection(real_ip, 443, ssl=up_ctx, server_hostname=hostname),
-                    timeout=15,
-                )
-                print(f"    -> connected to upstream {real_ip}")
+                up_sock = socket.create_connection((real_ip, 443), timeout=15)
+                up_ssl = up_ctx.wrap_socket(up_sock, server_hostname=hostname)
 
-                up_w.write(req)
-                await up_w.drain()
+                up_ssl.sendall(req)
+                resp = read_http_sync(up_ssl)
+                up_ssl.close()
 
-                resp = await asyncio.wait_for(read_http(up_r), timeout=30)
-
-                up_w.close()
-                await up_w.wait_closed()
-
+                # Process response
                 hdr_end = resp.find(b"\r\n\r\n")
                 if hdr_end >= 0:
                     hdrs = resp[:hdr_end + 4]
@@ -283,82 +305,70 @@ class NMSProxy:
                     elif was_chunked:
                         resp = rebuild_response(hdrs, body)
 
-                client_w.write(resp)
-                await client_w.drain()
+                client_ssl.sendall(resp)
 
                 # Check if client wants to close
                 hdrs_lower = req.split(b"\r\n\r\n")[0].lower()
                 if b"connection: close" in hdrs_lower:
                     return
 
-        except asyncio.TimeoutError:
-            pass
-        except ConnectionResetError:
+        except (socket.timeout, ConnectionResetError, BrokenPipeError):
             pass
         except Exception as e:
             print(f"  [ERROR] {type(e).__name__}: {e}")
         finally:
             try:
-                client_w.close()
-                await client_w.wait_closed()
+                client_ssl.close()
             except Exception:
                 pass
 
 
-async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
-    default_cert, default_key = _make_host_cert("nomanssky.com")
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(default_cert, default_key)
-    os.unlink(default_cert)
-    os.unlink(default_key)
-    ctx.sni_callback = sni_callback
-
-    async def raw_handler(reader, writer):
-        peer = writer.get_extra_info("peername")
+def _accept_loop(proxy: NMSProxy, srv_sock: socket.socket, ctx: ssl.SSLContext,
+                 stop_event: threading.Event):
+    """Accept loop: each connection gets its own thread for blocking I/O."""
+    while not stop_event.is_set():
         try:
-            transport = writer.transport
-            loop = asyncio.get_event_loop()
+            client_sock, addr = srv_sock.accept()
+        except socket.timeout:
+            continue
+        except OSError:
+            break
 
-            new_transport = await loop.start_tls(
-                transport, transport.get_protocol(), ctx, server_side=True,
-            )
+        t = threading.Thread(target=_handle_client, args=(proxy, client_sock, addr, ctx),
+                             daemon=True)
+        t.start()
 
-            ssl_obj = new_transport.get_extra_info("ssl_object")
-            hostname = _sni_map.pop(id(ssl_obj), None)
 
-            reader._transport = new_transport
-            writer._transport = new_transport
-            writer._nms_hostname = hostname
+def _handle_client(proxy: NMSProxy, client_sock: socket.socket, addr, ctx: ssl.SSLContext):
+    """TLS handshake + proxy, all blocking in a dedicated thread."""
+    client_sock.settimeout(30)
+    try:
+        client_ssl = ctx.wrap_socket(client_sock, server_side=True)
+    except ssl.SSLError as e:
+        print(f"  [TLS ERROR] {e} (from {addr})")
+        client_sock.close()
+        return
+    except Exception as e:
+        print(f"  [CONN ERROR] {type(e).__name__}: {e} (from {addr})")
+        client_sock.close()
+        return
 
-            await proxy.handle(reader, writer)
+    hostname = _sni_map.pop(id(client_ssl), None)
+    if not hostname or hostname not in REAL_IPS:
+        if not hostname:
+            print("  [WARN] Connection with no SNI hostname, closing")
+        else:
+            print(f"  [WARN] Unknown hostname '{hostname}', closing")
+        client_ssl.close()
+        return
 
-        except ssl.SSLError as e:
-            print(f"  [TLS ERROR] {e} (from {peer})")
-        except Exception as e:
-            print(f"  [CONN ERROR] {type(e).__name__}: {e} (from {peer})")
-        finally:
-            try:
-                writer.close()
-            except Exception:
-                pass
-
-    server = await asyncio.start_server(raw_handler, "0.0.0.0", port)
-
-    # Check for stop event periodically
-    async def watch_stop():
-        while not stop_event.is_set():
-            await asyncio.sleep(0.5)
-        server.close()
-        await server.wait_closed()
-
-    await asyncio.gather(server.serve_forever(), watch_stop(), return_exceptions=True)
+    proxy.handle(client_ssl, hostname)
 
 
 def verify_proxy(port: int = 443) -> list[str]:
     """Run diagnostics on the proxy. Returns a list of problems found."""
     problems = []
 
-    # 1. Check that the NMS hostnames resolve to localhost (hosts file working)
     from nms_expeditions_online.dns_resolve import NMS_HOSTNAMES
     for hostname in NMS_HOSTNAMES:
         try:
@@ -373,36 +383,44 @@ def verify_proxy(port: int = 443) -> list[str]:
         except socket.gaierror as e:
             problems.append(f"DNS: Cannot resolve {hostname}: {e}")
 
-    # 2. Check that we can TCP-connect to the proxy
-    try:
-        sock = socket.create_connection(("127.0.0.1", port), timeout=3)
-        sock.close()
-    except OSError as e:
-        problems.append(
-            f"TCP: Cannot connect to 127.0.0.1:{port}: {e}\n"
-            f"    The proxy may not be listening, or a firewall is blocking it."
-        )
-        return problems  # no point testing TLS if TCP fails
-
-    # 3. Check that TLS handshake works
     test_hostname = "merged-nms-static.nomanssky.com"
+
+    # On Windows, validate against the OS cert store (same as SChannel/game).
+    # On Linux, skip validation — the game runs via Proton which doesn't
+    # validate against the system store.
+    if platform.system() == "Windows":
+        test_ctx = ssl.create_default_context()
+    else:
+        test_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        test_ctx.check_hostname = False
+        test_ctx.verify_mode = ssl.CERT_NONE
+
     try:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
         with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
-            with ctx.wrap_socket(raw, server_hostname=test_hostname) as tls:
-                tls.close()
+            with test_ctx.wrap_socket(raw, server_hostname=test_hostname) as tls:
+                # Handshake succeeded — send a valid request to avoid
+                # server-side errors from a bare disconnect.
+                tls.sendall(
+                    f"GET /selftest HTTP/1.1\r\nHost: {test_hostname}\r\nConnection: close\r\n\r\n".encode()
+                )
+                try:
+                    tls.recv(4096)
+                except OSError:
+                    pass  # upstream may reject; handshake already proved TLS works
+    except ssl.SSLCertVerificationError as e:
+        problems.append(f"CERT VALIDATION FAILED: {e}\n"
+                        f"    The CA cert is not trusted by the OS cert store.\n"
+                        f"    The game will reject connections for the same reason.")
     except ssl.SSLError as e:
-        problems.append(f"TLS: Handshake to proxy failed: {e}")
+        problems.append(f"TLS: Handshake failed: {e}")
     except OSError as e:
-        problems.append(f"TLS: Connection failed during handshake: {e}")
+        problems.append(f"TLS: Connection to proxy failed: {e}")
 
     return problems
 
 
-def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread, threading.Event]:
-    """Start the proxy in a background thread. Returns (thread, stop_event)."""
+def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread, threading.Event, http.server.HTTPServer | None]:
+    """Start the proxy in a background thread. Returns (thread, stop_event, crl_server)."""
     global REAL_IPS
 
     print("Resolving NMS server IPs...")
@@ -411,25 +429,34 @@ def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread
         print(f"  {hostname} -> {ip}")
 
     init_ca()
+    crl_server = _start_crl_server()
     proxy = NMSProxy(expedition_path)
     print(f"Loaded expedition: SeasonId={proxy.meta['SeasonId']}")
 
+    cert_path, key_path = _make_server_cert()
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert_path, key_path)
+    os.unlink(cert_path)
+    os.unlink(key_path)
+    ctx.sni_callback = _sni_hostname_callback
+
+    srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        srv_sock.bind(("0.0.0.0", port))
+    except OSError as e:
+        if e.errno in (98, 10048) or "address already in use" in str(e).lower():
+            print(f"\nERROR: Port {port} is already in use.")
+            print("Close any web servers, VPNs, or other software using port 443 and try again.")
+        else:
+            print(f"\nERROR: {e}")
+        raise
+    srv_sock.listen(128)
+    srv_sock.settimeout(1.0)
+
     stop_event = threading.Event()
 
-    def run():
-        try:
-            if platform.system() == "Windows":
-                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-            asyncio.run(_run_server(proxy, port, stop_event))
-        except OSError as e:
-            if "address already in use" in str(e).lower() or e.errno == 98 or e.errno == 10048:
-                print(f"\nERROR: Port {port} is already in use.")
-                print("Close any web servers, VPNs, or other software using port 443 and try again.")
-            else:
-                print(f"\nERROR: {e}")
-        except Exception as e:
-            print(f"\nERROR: {e}")
-
-    thread = threading.Thread(target=run, daemon=True)
+    thread = threading.Thread(target=_accept_loop, args=(proxy, srv_sock, ctx, stop_event),
+                              daemon=True)
     thread.start()
-    return thread, stop_event
+    return thread, stop_event, crl_server

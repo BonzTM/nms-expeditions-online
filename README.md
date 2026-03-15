@@ -38,7 +38,7 @@ No Man's Sky checks Hello Games' servers on startup to determine which expeditio
 2. Place `SEASON_DATA_CACHE.JSON` in the **same folder** as the `.exe`
 3. Double-click `NMSExpeditionsOnline.exe` (it will request administrator privileges)
 
-#### Linux
+#### Linux / Steam Deck
 
 **Prerequisites:** Python 3.10+ (most distros ship with this)
 
@@ -72,7 +72,8 @@ No Man's Sky checks Hello Games' servers on startup to determine which expeditio
 1. Select **option 2 (Run)** from the menu
 2. Wait for "Proxy is running!" to appear
 3. **Launch No Man's Sky** through Steam as normal
-4. You should see:
+4. You should see request logs in the proxy window (e.g., `POST https://merged-nms-auth.nomanssky.com/Steam`)
+5. In-game you should see:
    - "Connected to Discovery Services" (not stuck on "Connecting")
    - Other players in the Anomaly
    - Your chosen expedition available to start
@@ -104,6 +105,20 @@ To switch to a different expedition:
 3. Replace the `SEASON_DATA_CACHE.JSON` file with the new expedition
 4. Start the proxy again
 
+## Windows-Specific Details
+
+On Windows, the proxy performs additional setup to satisfy Windows' TLS requirements:
+
+- **CA certificate installation** — The proxy generates a temporary CA certificate and installs it into the Windows Trusted Root Certificate Store using `certutil`. This is required because NMS uses Windows' native TLS stack (SChannel via libcurl), which validates server certificates against the OS store. The certificate is automatically removed when the proxy stops.
+
+- **Certificate Revocation List (CRL)** — SChannel requires the ability to check whether certificates have been revoked. The proxy runs a small HTTP server on port 18625 that serves an empty CRL. The server certificate includes a CRL Distribution Point pointing to this server so SChannel's revocation check passes.
+
+- **DNS cache flush** — After modifying the hosts file, the proxy runs `ipconfig /flushdns` to ensure Windows picks up the changes immediately.
+
+- **Self-test** — On startup, the proxy verifies that DNS redirects are working, the TLS handshake succeeds, and (on Windows) that the certificate passes OS-level validation. If the self-test detects problems, it will report them before you launch the game.
+
+None of this applies on Linux — Proton/Wine's TLS implementation does not perform strict certificate validation.
+
 ## Troubleshooting
 
 ### "Port 443 is already in use"
@@ -120,16 +135,30 @@ Close the conflicting application and try again.
 
 Make sure `SEASON_DATA_CACHE.JSON` is in the same directory as the executable (Windows) or the project directory (Linux).
 
+### Self-test reports "CERT VALIDATION FAILED" (Windows)
+
+The proxy's CA certificate is not trusted by the OS. This usually means `certutil` failed to install it. Try:
+- Make sure you accepted the UAC (administrator) prompt
+- Check that no antivirus is blocking `certutil`
+- Try running the tool from an elevated Command Prompt
+
+### Self-test reports "DNS: hostname resolves to ... instead of 127.0.0.1"
+
+The hosts file redirect is not taking effect. Try:
+- Restart the DNS Client service: `net stop dnscache && net start dnscache`
+- Reboot
+
 ### Game shows "No Active Expedition"
 
 - Make sure the proxy is running (you should see "Proxy is running!" in the tool)
 - Make sure you installed the hosts file entries (option 1)
-- Restart NMS after starting the proxy — the game caches DNS from startup
+- Restart NMS after starting the proxy — the game checks expedition data on startup
 
 ### Game says "Connecting to Discovery Services" and never connects
 
 - Check that the proxy window shows connection logs (like `POST https://merged-nms-auth...`)
-- If the proxy is silent, restart both the proxy and NMS
+- If the proxy shows `[TLS ERROR]` messages, see the Windows-specific section above
+- If the proxy is completely silent after launching the game, the hosts file redirect may not be working — check the self-test output
 - Make sure no firewall is blocking connections to localhost port 443
 
 ### Multiplayer not working
@@ -141,7 +170,52 @@ Multiplayer uses Steam's networking and should work regardless. If you don't see
 
 ## How It Works (Technical Details)
 
-The tool modifies your system's hosts file to redirect four NMS API hostnames to `127.0.0.1`:
+```mermaid
+flowchart LR
+    NMS["No Man's Sky"]
+
+    subgraph localhost["Local Machine"]
+        direction TB
+        Hosts["hosts file<br/>*.nomanssky.com → 127.0.0.1"]
+        Proxy["NMS Expeditions<br/>Online Proxy<br/><i>:443</i>"]
+        CRL["CRL Server<br/><i>:18625</i><br/><small>(Windows only)</small>"]
+        JSON["SEASON_DATA<br/>_CACHE.JSON"]
+    end
+
+    subgraph HG["Hello Games Servers"]
+        Auth["Auth Server<br/>merged-nms-auth"]
+        Static["Static Server<br/>merged-nms-static"]
+        Disc["Discovery Server<br/>merged-nms-discovery"]
+    end
+
+    NMS -- "DNS lookup<br/>redirected by<br/>hosts file" --> Hosts
+    Hosts -.-> Proxy
+    NMS -- "HTTPS :443" --> Proxy
+
+    Proxy -- "POST /Steam<br/><b>patches seasonData</b>" --> Auth
+    Auth -- response --> Proxy
+
+    Proxy -. "POST /season<br/><b>intercepted</b>" .-> JSON
+    JSON -. "custom expedition<br/>JSON returned" .-> Proxy
+
+    Proxy -- "all other requests<br/>forwarded unmodified" --> Disc
+
+    Proxy -- "revocation check<br/>(Windows)" --> CRL
+
+    style JSON fill:#2d6a2e,stroke:#333,color:#fff
+    style Proxy fill:#1a5276,stroke:#333,color:#fff
+    style CRL fill:#1a5276,stroke:#333,color:#fff
+```
+
+**Traffic flow:**
+
+1. The hosts file redirects NMS API hostnames to `127.0.0.1`
+2. The proxy accepts the game's HTTPS connections on port 443
+3. For `POST /season` — the proxy returns the custom expedition JSON directly (no upstream request needed)
+4. For `POST /Steam` — the proxy forwards to the real auth server, then patches `seasonData` in the response
+5. All other requests (discovery, bases, content reports) are forwarded to the real servers unmodified
+
+**Hosts file entries:**
 
 ```
 127.0.0.1 merged-nms-auth.nomanssky.com
@@ -150,14 +224,12 @@ The tool modifies your system's hosts file to redirect four NMS API hostnames to
 127.0.0.1 merged-nms-contentreport.nomanssky.com
 ```
 
-A local HTTPS proxy listens on port 443 and:
-- Reads the TLS SNI (Server Name Indication) to determine which server the game wants
-- Generates per-hostname TLS certificates signed by a local CA
-- Connects to the real NMS servers (resolved via direct DNS query to Google's `8.8.8.8`, bypassing the hosts file)
-- Forwards requests and responses, modifying only:
-  - `POST /season` on the static server — returns your custom expedition JSON
-  - `POST /Steam` on the auth server — patches the `seasonData` to match your expedition
-- All other traffic passes through unmodified
+**TLS setup:**
+
+- An ephemeral CA and server certificate are generated at startup
+- The server certificate covers all four NMS hostnames via Subject Alternative Names
+- On Windows, the CA cert is installed in the Trusted Root store and a CRL is served on port 18625 to satisfy SChannel's revocation checks
+- On Linux, Proton/Wine's TLS does not validate certificates, so no CA installation is needed
 
 ## Building from Source
 
@@ -179,7 +251,7 @@ On a Windows machine:
 
 ```bash
 pip install cryptography pyinstaller
-pyinstaller --onefile --console --uac-admin --name NMSExpeditionsOnline nms_expeditions_online/__main__.py
+python build.py
 ```
 
 The executable will be in the `dist/` folder.

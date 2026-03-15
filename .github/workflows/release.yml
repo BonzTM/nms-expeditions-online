@@ -22,14 +22,7 @@ jobs:
         run: pip install cryptography pyinstaller
 
       - name: Build Windows exe
-        run: >
-          pyinstaller
-          --onefile
-          --console
-          --uac-admin
-          --collect-submodules cryptography
-          --name NMSExpeditionsOnline
-          nms_expeditions_online/__main__.py
+        run: python build.py
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

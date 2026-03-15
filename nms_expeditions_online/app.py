@@ -48,7 +48,7 @@ def get_expedition_info(path: str) -> dict | None:
     """Read basic info from expedition JSON."""
     import json
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return {
             "SeasonId": data.get("SeasonId", "?"),
@@ -186,7 +186,7 @@ def do_run():
 
     print("Starting proxy server...\n")
     try:
-        thread, stop_event = proxy_module.start_proxy(exp_file, port=443)
+        thread, stop_event, crl_server = proxy_module.start_proxy(exp_file, port=443)
     except Exception as e:
         print(f"\nERROR: {e}")
         input("\nPress Enter to return to menu...")
@@ -201,12 +201,13 @@ def do_run():
         input("\nPress Enter to return to menu...")
         return
 
-    print("Installing proxy CA certificate...")
-    if proxy_module.install_ca_cert():
-        print("  CA certificate installed into trusted root store.")
-    else:
-        print("  WARNING: Failed to install CA certificate.")
-        print("  The game may not trust the proxy's TLS certificates.")
+    if os.name == "nt":
+        print("Installing proxy CA certificate...")
+        if proxy_module.install_ca_cert():
+            print("  CA certificate installed into trusted root store.")
+        else:
+            print("  WARNING: Failed to install CA certificate.")
+            print("  The game may not trust the proxy's TLS certificates.")
 
     print("\nRunning self-test...")
     problems = proxy_module.verify_proxy(port=443)
@@ -235,6 +236,9 @@ def do_run():
     print("Stopping proxy...")
     stop_event.set()
     thread.join(timeout=5)
+    if crl_server is not None:
+        crl_server.shutdown()
+        crl_server.server_close()
     proxy_module.uninstall_ca_cert()
     print("Proxy stopped.\n")
     input("Press Enter to return to menu...")
