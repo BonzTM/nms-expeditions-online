@@ -52,6 +52,9 @@ def install_ca_cert() -> bool:
         return False
 
     if platform.system() == "Windows":
+        # Remove any stale cert from a previous run first
+        uninstall_ca_cert()
+
         tf = tempfile.NamedTemporaryFile(delete=False, suffix=".cer")
         tf.write(_ca_cert.public_bytes(serialization.Encoding.DER))
         tf.close()
@@ -70,9 +73,8 @@ def install_ca_cert() -> bool:
 
 
 def uninstall_ca_cert():
-    """Remove the ephemeral CA cert from the OS trust store."""
+    """Remove the CA cert from the OS trust store."""
     if platform.system() == "Windows":
-        # certutil can delete by CN from the Root store
         subprocess.run(
             ["certutil", "-delstore", "Root", CA_CERT_NAME],
             capture_output=True, text=True,
