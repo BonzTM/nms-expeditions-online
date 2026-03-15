@@ -4,6 +4,8 @@ import asyncio
 import datetime
 import json
 import os
+import platform
+import socket
 import ssl
 import tempfile
 import threading
@@ -191,6 +193,10 @@ class NMSProxy:
             hostname = _sni_map.pop(id(ssl_obj), None) if ssl_obj else None
 
         if not hostname or hostname not in REAL_IPS:
+            if not hostname:
+                print("  [WARN] Connection with no SNI hostname, closing")
+            else:
+                print(f"  [WARN] Unknown hostname '{hostname}', closing")
             try:
                 client_w.close()
             except Exception:
@@ -267,25 +273,36 @@ async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
     os.unlink(default_key)
     ctx.sni_callback = sni_callback
 
-    async def handler(reader, writer):
+    async def raw_handler(reader, writer):
+        peer = writer.get_extra_info("peername")
         try:
-            ssl_obj = writer.get_extra_info("ssl_object")
-            hostname = _sni_map.pop(id(ssl_obj), None) if ssl_obj else None
+            transport = writer.transport
+            loop = asyncio.get_event_loop()
+
+            new_transport = await loop.start_tls(
+                transport, transport.get_protocol(), ctx, server_side=True,
+            )
+
+            ssl_obj = new_transport.get_extra_info("ssl_object")
+            hostname = _sni_map.pop(id(ssl_obj), None)
+
+            reader._transport = new_transport
+            writer._transport = new_transport
             writer._nms_hostname = hostname
 
             await proxy.handle(reader, writer)
 
-        except ssl.SSLError:
-            pass
-        except Exception:
-            pass
+        except ssl.SSLError as e:
+            print(f"  [TLS ERROR] {e} (from {peer})")
+        except Exception as e:
+            print(f"  [CONN ERROR] {e} (from {peer})")
         finally:
             try:
                 writer.close()
             except Exception:
                 pass
 
-    server = await asyncio.start_server(handler, "0.0.0.0", port, ssl=ctx)
+    server = await asyncio.start_server(raw_handler, "0.0.0.0", port)
 
     # Check for stop event periodically
     async def watch_stop():
@@ -295,6 +312,53 @@ async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
         await server.wait_closed()
 
     await asyncio.gather(server.serve_forever(), watch_stop(), return_exceptions=True)
+
+
+def verify_proxy(port: int = 443) -> list[str]:
+    """Run diagnostics on the proxy. Returns a list of problems found."""
+    problems = []
+
+    # 1. Check that the NMS hostnames resolve to localhost (hosts file working)
+    from nms_expeditions_online.dns_resolve import NMS_HOSTNAMES
+    for hostname in NMS_HOSTNAMES:
+        try:
+            results = socket.getaddrinfo(hostname, port, socket.AF_INET, socket.SOCK_STREAM)
+            ips = {r[4][0] for r in results}
+            if "127.0.0.1" not in ips:
+                problems.append(
+                    f"DNS: {hostname} resolves to {ips} instead of 127.0.0.1\n"
+                    f"    The hosts file redirect is not working.\n"
+                    f"    Try restarting the DNS Client service or rebooting."
+                )
+        except socket.gaierror as e:
+            problems.append(f"DNS: Cannot resolve {hostname}: {e}")
+
+    # 2. Check that we can TCP-connect to the proxy
+    try:
+        sock = socket.create_connection(("127.0.0.1", port), timeout=3)
+        sock.close()
+    except OSError as e:
+        problems.append(
+            f"TCP: Cannot connect to 127.0.0.1:{port}: {e}\n"
+            f"    The proxy may not be listening, or a firewall is blocking it."
+        )
+        return problems  # no point testing TLS if TCP fails
+
+    # 3. Check that TLS handshake works
+    test_hostname = "merged-nms-static.nomanssky.com"
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+            with ctx.wrap_socket(raw, server_hostname=test_hostname) as tls:
+                tls.close()
+    except ssl.SSLError as e:
+        problems.append(f"TLS: Handshake to proxy failed: {e}")
+    except OSError as e:
+        problems.append(f"TLS: Connection failed during handshake: {e}")
+
+    return problems
 
 
 def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread, threading.Event]:
@@ -314,6 +378,8 @@ def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread
 
     def run():
         try:
+            if platform.system() == "Windows":
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             asyncio.run(_run_server(proxy, port, stop_event))
         except OSError as e:
             if "address already in use" in str(e).lower() or e.errno == 98 or e.errno == 10048:

@@ -194,14 +194,27 @@ def do_run():
 
     # Give the proxy a moment to start
     import time
-    time.sleep(1)
+    time.sleep(2)
 
     if not thread.is_alive():
         print("\nProxy failed to start. Check errors above.")
         input("\nPress Enter to return to menu...")
         return
 
-    print("\n" + "=" * 50)
+    print("\nRunning self-test...")
+    problems = proxy_module.verify_proxy(port=443)
+    if problems:
+        print("\n  PROBLEMS DETECTED:\n")
+        for p in problems:
+            for line in p.split("\n"):
+                print(f"    {line}")
+            print()
+        print("  The proxy is running but the game may not connect.")
+        print("  Fix the issues above, or press Enter to continue anyway.\n")
+    else:
+        print("  Self-test passed: proxy is reachable and TLS is working.\n")
+
+    print("=" * 50)
     print("  Proxy is running!")
     print("  Launch No Man's Sky and enjoy your expedition.")
     print("=" * 50)
