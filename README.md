@@ -119,55 +119,6 @@ On Windows, the proxy performs additional setup to satisfy Windows' TLS requirem
 
 None of this applies on Linux — Proton/Wine's TLS implementation does not perform strict certificate validation.
 
-## Troubleshooting
-
-### "Port 443 is already in use"
-
-Something else is using port 443. Common culprits:
-- **IIS** (Internet Information Services) on Windows
-- **Apache/Nginx** web servers
-- **Skype** (older versions)
-- **VPN software**
-
-Close the conflicting application and try again.
-
-### "No expedition JSON file found"
-
-Make sure `SEASON_DATA_CACHE.JSON` is in the same directory as the executable (Windows) or the project directory (Linux).
-
-### Self-test reports "CERT VALIDATION FAILED" (Windows)
-
-The proxy's CA certificate is not trusted by the OS. This usually means `certutil` failed to install it. Try:
-- Make sure you accepted the UAC (administrator) prompt
-- Check that no antivirus is blocking `certutil`
-- Try running the tool from an elevated Command Prompt
-
-### Self-test reports "DNS: hostname resolves to ... instead of 127.0.0.1"
-
-The hosts file redirect is not taking effect. Try:
-- Restart the DNS Client service: `net stop dnscache && net start dnscache`
-- Reboot
-
-### Game shows "No Active Expedition"
-
-- Make sure the proxy is running (you should see "Proxy is running!" in the tool)
-- Make sure you installed the hosts file entries (option 1)
-- Restart NMS after starting the proxy — the game checks expedition data on startup
-
-### Game says "Connecting to Discovery Services" and never connects
-
-- Check that the proxy window shows connection logs (like `POST https://merged-nms-auth...`)
-- If the proxy shows `[TLS ERROR]` messages, see the Windows-specific section above
-- If the proxy is completely silent after launching the game, the hosts file redirect may not be working — check the self-test output
-- Make sure no firewall is blocking connections to localhost port 443
-
-### Multiplayer not working
-
-Multiplayer uses Steam's networking and should work regardless. If you don't see other players:
-- Check your Steam online status
-- Make sure NMS multiplayer is enabled in the game's network settings
-- Try visiting the Anomaly
-
 ## How It Works (Technical Details)
 
 ![Architecture Diagram](docs/NMS-detailed-dark.excalidraw.png)
@@ -220,6 +171,55 @@ python build.py
 ```
 
 The executable will be in the `dist/` folder.
+
+## Troubleshooting
+
+### "Port 443 is already in use"
+
+Something else is using port 443. Common culprits:
+- **IIS** (Internet Information Services) on Windows
+- **Apache/Nginx** web servers
+- **Skype** (older versions)
+- **VPN software**
+
+Close the conflicting application and try again.
+
+### "No expedition JSON file found"
+
+Make sure `SEASON_DATA_CACHE.JSON` is in the same directory as the executable (Windows) or the project directory (Linux).
+
+### Self-test reports "CERT VALIDATION FAILED" (Windows)
+
+The proxy's CA certificate is not trusted by the OS. This usually means `certutil` failed to install it. Try:
+- Make sure you accepted the UAC (administrator) prompt
+- Check that no antivirus is blocking `certutil`
+- Try running the tool from an elevated Command Prompt
+
+### Self-test reports "DNS: hostname resolves to ... instead of 127.0.0.1"
+
+The hosts file redirect is not taking effect. Try:
+- Restart the DNS Client service: `net stop dnscache && net start dnscache`
+- Reboot
+
+### Game shows "No Active Expedition"
+
+- Make sure the proxy is running (you should see "Proxy is running!" in the tool)
+- Make sure you installed the hosts file entries (option 1)
+- Restart NMS after starting the proxy — the game checks expedition data on startup
+
+### Game says "Connecting to Discovery Services" and never connects
+
+- Check that the proxy window shows connection logs (like `POST https://merged-nms-auth...`)
+- If the proxy shows `[TLS ERROR]` messages, see the Windows-specific section above
+- If the proxy is completely silent after launching the game, the hosts file redirect may not be working — check the self-test output
+- Make sure no firewall is blocking connections to localhost port 443
+
+### Multiplayer not working
+
+Multiplayer uses Steam's networking and should work regardless. If you don't see other players:
+- Check your Steam online status
+- Make sure NMS multiplayer is enabled in the game's network settings
+- Try visiting the Anomaly
 
 ## Credits
 
