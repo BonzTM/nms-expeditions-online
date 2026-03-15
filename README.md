@@ -14,6 +14,7 @@ This tool acts as a local proxy that intercepts the game's expedition/season dat
 - [How It Works (Technical Details)](#how-it-works-technical-details)
 - [Building from Source](#building-from-source)
 - [Troubleshooting](#troubleshooting)
+- [Disclaimer](#disclaimer)
 - [Credits](#credits)
 
 ## How It Works
@@ -232,6 +233,14 @@ Multiplayer uses Steam's networking and should work regardless. If you don't see
 - Check your Steam online status
 - Make sure NMS multiplayer is enabled in the game's network settings
 - Try visiting the Anomaly
+
+## Disclaimer
+
+This project is **not affiliated with, endorsed by, or associated with Hello Games** or No Man's Sky in any way. No Man's Sky is a trademark of Hello Games Limited.
+
+This tool does **not** modify any game files, game memory, or game code. It operates solely at the network level by serving alternative expedition metadata through a local proxy. All multiplayer, discovery, and base-sharing traffic continues to Hello Games' servers unmodified.
+
+That said, as with any other NMS mods or modding tools, use of this tool may conflict with the [No Man's Sky End User License Agreement](https://www.nomanssky.com/end-user-licence-agreement/). **Use this tool at your own risk.** The authors make no guarantees regarding account safety.
 
 ## Credits
 
