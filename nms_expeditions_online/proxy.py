@@ -7,6 +7,7 @@ import os
 import platform
 import socket
 import ssl
+import subprocess
 import tempfile
 import threading
 
@@ -40,6 +41,42 @@ def init_ca():
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(_ca_key, hashes.SHA256())
     )
+
+
+CA_CERT_NAME = "NMS Expedition Proxy CA"
+
+
+def install_ca_cert() -> bool:
+    """Install the ephemeral CA cert into the OS trust store. Returns True on success."""
+    if _ca_cert is None:
+        return False
+
+    if platform.system() == "Windows":
+        tf = tempfile.NamedTemporaryFile(delete=False, suffix=".cer")
+        tf.write(_ca_cert.public_bytes(serialization.Encoding.DER))
+        tf.close()
+        try:
+            result = subprocess.run(
+                ["certutil", "-addstore", "-f", "Root", tf.name],
+                capture_output=True, text=True,
+            )
+            return result.returncode == 0
+        finally:
+            os.unlink(tf.name)
+    else:
+        # Linux/macOS: not needed (game typically runs via Proton which
+        # doesn't validate against the system store)
+        return True
+
+
+def uninstall_ca_cert():
+    """Remove the ephemeral CA cert from the OS trust store."""
+    if platform.system() == "Windows":
+        # certutil can delete by CN from the Root store
+        subprocess.run(
+            ["certutil", "-delstore", "Root", CA_CERT_NAME],
+            capture_output=True, text=True,
+        )
 
 
 def _make_host_cert(hostname: str) -> tuple[str, str]:

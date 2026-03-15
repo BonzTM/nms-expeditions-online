@@ -201,6 +201,13 @@ def do_run():
         input("\nPress Enter to return to menu...")
         return
 
+    print("Installing proxy CA certificate...")
+    if proxy_module.install_ca_cert():
+        print("  CA certificate installed into trusted root store.")
+    else:
+        print("  WARNING: Failed to install CA certificate.")
+        print("  The game may not trust the proxy's TLS certificates.")
+
     print("\nRunning self-test...")
     problems = proxy_module.verify_proxy(port=443)
     if problems:
@@ -228,6 +235,7 @@ def do_run():
     print("Stopping proxy...")
     stop_event.set()
     thread.join(timeout=5)
+    proxy_module.uninstall_ca_cert()
     print("Proxy stopped.\n")
     input("Press Enter to return to menu...")
 
