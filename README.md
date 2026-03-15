@@ -10,6 +10,7 @@ This tool acts as a local proxy that intercepts the game's expedition/season dat
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
 - [Important Warnings](#important-warnings)
+- [Security Transparency (Windows)](#security-transparency-windows)
 - [Windows-Specific Details](#windows-specific-details)
 - [How It Works (Technical Details)](#how-it-works-technical-details)
 - [Building from Source](#building-from-source)
@@ -117,6 +118,53 @@ To switch to a different expedition:
 2. Stop the proxy
 3. Replace the `SEASON_DATA_CACHE.JSON` file with the new expedition
 4. Start the proxy again
+
+## Security Transparency (Windows)
+
+This tool uses techniques that are commonly associated with malware. **We want to be upfront about what it does and why**, so you can make an informed decision before running it.
+
+### The .exe is unsigned — your browser and Windows will warn you
+
+This project is not commercially signed. When you download the `.exe`, your browser may flag it as potentially dangerous, and Windows SmartScreen will likely show a warning when you run it. This is normal for unsigned open-source software. You can click **"More info" → "Run anyway"** to proceed.
+
+If you're uncomfortable running an unsigned executable, you can always [build from source](#building-from-source) or [run the Python code directly](#running-directly) to verify exactly what's being executed.
+
+### The tool installs a CA certificate into your Windows trust store
+
+To intercept the game's HTTPS traffic, the proxy generates a temporary Certificate Authority (CA) and installs it into your Windows Trusted Root Certificate Store. **This is a significant action** — a root CA certificate can, in principle, be used to impersonate any website over HTTPS.
+
+Here's why we believe the risk is minimal:
+
+- The CA is **generated fresh every time** you run the tool — the private key exists only in memory and is never written to disk
+- Both the CA and server certificates are **valid for only 48 hours**. Even if the tool crashes and the CA is not properly removed from the trust store, it expires and becomes unusable within two days. An expired CA cannot be used to impersonate websites or sign new certificates.
+- The CA is **automatically removed** from the trust store when the proxy stops
+- On subsequent runs, the tool **removes any stale CA** from a previous session before installing a new one
+- The source code is open for you to verify this behavior yourself
+
+That said, always make sure the proxy shuts down cleanly (press Enter to stop) so the CA certificate is properly removed. If the tool crashes or is force-killed, the CA may remain installed until it expires — you can also manually remove it via `certmgr.msc` (look for `NMS Expedition Proxy CA` under Trusted Root Certification Authorities).
+
+### The tool redirects network traffic through a local proxy
+
+The proxy works by adding entries to your system's `hosts` file that redirect four No Man's Sky API domains to `127.0.0.1` (your own machine). This is the same mechanism used by ad blockers, parental controls, and development tools — but it is also a technique used by malware to hijack traffic.
+
+In this case:
+
+- **Only four NMS-specific domains are redirected** — no other traffic is affected
+- The hosts file changes are **clearly visible** (open `C:\Windows\System32\drivers\etc\hosts` in any text editor)
+- The changes are **reversed** when you select Uninstall from the menu
+
+### The tool requests administrator privileges
+
+Administrator access is required for two reasons:
+
+1. Modifying the hosts file (`C:\Windows\System32\drivers\etc\hosts`) requires elevated permissions
+2. Listening on port 443 (HTTPS) requires elevated permissions
+
+The tool does not use administrator privileges for anything else.
+
+### Antivirus software may flag this tool
+
+Because this tool modifies the hosts file, installs a root certificate, and listens on port 443, some antivirus products may flag it as suspicious or block it entirely. This is expected behavior — these are exactly the kinds of actions that security software is designed to watch for. You may need to add an exception for the tool in your antivirus settings.
 
 ## Windows-Specific Details
 

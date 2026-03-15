@@ -38,7 +38,7 @@ def init_ca():
         .public_key(_ca_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=2))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(_ca_key, hashes.SHA256())
     )
@@ -49,7 +49,7 @@ def init_ca():
         x509.CertificateRevocationListBuilder()
         .issuer_name(_ca_cert.subject)
         .last_update(now)
-        .next_update(now + datetime.timedelta(days=1))
+        .next_update(now + datetime.timedelta(days=2))
         .sign(_ca_key, hashes.SHA256())
     ).public_bytes(serialization.Encoding.DER)
 
@@ -104,7 +104,7 @@ def _make_server_cert() -> tuple[str, str]:
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=2))
         .add_extension(x509.SubjectAlternativeName(san_names), critical=False)
         .add_extension(
             x509.CRLDistributionPoints([
