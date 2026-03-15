@@ -4,6 +4,18 @@ Play any old No Man's Sky expedition **online with full multiplayer** — see ot
 
 This tool acts as a local proxy that intercepts the game's expedition/season data and replaces it with the expedition of your choice, while leaving all other game traffic (multiplayer, discovery services, bases) completely untouched.
 
+## Table of Contents
+
+- [How It Works](#how-it-works)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
+- [Important Warnings](#important-warnings)
+- [Windows-Specific Details](#windows-specific-details)
+- [How It Works (Technical Details)](#how-it-works-technical-details)
+- [Building from Source](#building-from-source)
+- [Troubleshooting](#troubleshooting)
+- [Credits](#credits)
+
 ## How It Works
 
 No Man's Sky checks Hello Games' servers on startup to determine which expedition is currently active. This tool:
