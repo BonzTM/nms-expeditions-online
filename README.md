@@ -186,7 +186,7 @@ None of this applies on Linux — Proton/Wine's TLS implementation does not perf
 
 ## How It Works (Technical Details)
 
-![Architecture Diagram](docs/NMS-detailed-dark.excalidraw.png)
+![Architecture Diagram](docs/architecture/NMS-detailed-dark.excalidraw.png)
 
 **Traffic flow:**
 
