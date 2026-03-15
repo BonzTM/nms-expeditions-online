@@ -4,11 +4,9 @@ import asyncio
 import datetime
 import json
 import os
-import platform
 import ssl
 import tempfile
 import threading
-from pathlib import Path
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -269,21 +267,10 @@ async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
     os.unlink(default_key)
     ctx.sni_callback = sni_callback
 
-    async def raw_handler(reader, writer):
-        peer = writer.get_extra_info("peername")
+    async def handler(reader, writer):
         try:
-            transport = writer.transport
-            loop = asyncio.get_event_loop()
-
-            new_transport = await loop.start_tls(
-                transport, transport.get_protocol(), ctx, server_side=True,
-            )
-
-            ssl_obj = new_transport.get_extra_info("ssl_object")
-            hostname = _sni_map.pop(id(ssl_obj), None)
-
-            reader._transport = new_transport
-            writer._transport = new_transport
+            ssl_obj = writer.get_extra_info("ssl_object")
+            hostname = _sni_map.pop(id(ssl_obj), None) if ssl_obj else None
             writer._nms_hostname = hostname
 
             await proxy.handle(reader, writer)
@@ -298,7 +285,7 @@ async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
             except Exception:
                 pass
 
-    server = await asyncio.start_server(raw_handler, "0.0.0.0", port)
+    server = await asyncio.start_server(handler, "0.0.0.0", port, ssl=ctx)
 
     # Check for stop event periodically
     async def watch_stop():
@@ -327,11 +314,6 @@ def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread
 
     def run():
         try:
-            # On Windows the default ProactorEventLoop does not support
-            # loop.start_tls() which is required for the TLS handshake
-            # upgrade.  Force the SelectorEventLoop so the proxy works.
-            if platform.system() == "Windows":
-                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             asyncio.run(_run_server(proxy, port, stop_event))
         except OSError as e:
             if "address already in use" in str(e).lower() or e.errno == 98 or e.errno == 10048:
