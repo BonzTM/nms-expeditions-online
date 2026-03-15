@@ -260,6 +260,7 @@ class NMSProxy:
                     asyncio.open_connection(real_ip, 443, ssl=up_ctx, server_hostname=hostname),
                     timeout=15,
                 )
+                print(f"    -> connected to upstream {real_ip}")
 
                 up_w.write(req)
                 await up_w.drain()
@@ -295,7 +296,7 @@ class NMSProxy:
         except ConnectionResetError:
             pass
         except Exception as e:
-            print(f"  [ERROR] {e}")
+            print(f"  [ERROR] {type(e).__name__}: {e}")
         finally:
             try:
                 client_w.close()
@@ -334,7 +335,7 @@ async def _run_server(proxy: NMSProxy, port: int, stop_event: threading.Event):
         except ssl.SSLError as e:
             print(f"  [TLS ERROR] {e} (from {peer})")
         except Exception as e:
-            print(f"  [CONN ERROR] {e} (from {peer})")
+            print(f"  [CONN ERROR] {type(e).__name__}: {e} (from {peer})")
         finally:
             try:
                 writer.close()
