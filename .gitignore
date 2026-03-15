@@ -7,3 +7,15 @@ build/
 *.pem
 SEASON_DATA_CACHE.*
 excalidraw.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Virtual environments
+venv/
+.venv/

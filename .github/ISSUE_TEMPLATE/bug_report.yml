@@ -1,0 +1,74 @@
+name: Bug Report
+description: Report a problem with NMS Expeditions Online
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows 10
+        - Windows 11
+        - Linux (Desktop)
+        - Steam Deck
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation Method
+      options:
+        - Windows .exe (from Releases)
+        - run.sh (Linux)
+        - pip install (Linux)
+        - Running from source
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version (if running from source)
+      placeholder: "e.g., 3.12.1"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem clearly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this issue?
+      placeholder: |
+        1. Downloaded expedition X from cwmonkey's tool
+        2. Ran the proxy
+        3. Launched NMS
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Tool output
+      description: Copy and paste the full output from the proxy window.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Anything else that might help (screenshots, antivirus software, VPN, etc.)

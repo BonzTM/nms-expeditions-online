@@ -39,7 +39,8 @@ jobs:
         run: |
           mkdir -p nms-expeditions-online
           cp -r nms_expeditions_online nms-expeditions-online/
-          cp README.md LICENSE requirements.txt nms-expeditions-online/
+          cp README.md LICENSE requirements.txt pyproject.toml run.sh nms-expeditions-online/
+          chmod +x nms-expeditions-online/run.sh
           tar czf nms-expeditions-online-linux.tar.gz nms-expeditions-online
 
       - name: Upload Linux artifact

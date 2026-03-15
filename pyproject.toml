@@ -4,14 +4,46 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "nms-expeditions-online"
-version = "1.0.0"
+version = "1.1.1"
 description = "Play old No Man's Sky expeditions online with full multiplayer"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "AGPL3"
-dependencies = [
-    "cryptography",
+license = "AGPL-3.0-only"
+authors = [
+    { name = "BonzTM" },
 ]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+]
+dependencies = [
+    "cryptography>=42,<45",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[project.urls]
+Repository = "https://github.com/BonzTM/nms-expeditions-online"
+Issues = "https://github.com/BonzTM/nms-expeditions-online/issues"
 
 [project.scripts]
 nms-expeditions-online = "nms_expeditions_online.app:main"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

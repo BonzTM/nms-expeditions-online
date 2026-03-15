@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build the Windows .exe with the same PyInstaller options used in CI."""
 
-import PyInstaller.__main__
 import platform
+
+import PyInstaller.__main__
 
 args = [
     "nms_expeditions_online/__main__.py",

@@ -1,5 +1,9 @@
 # NMS Expeditions Online
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![CI](https://github.com/BonzTM/nms-expeditions-online/actions/workflows/ci.yml/badge.svg)](https://github.com/BonzTM/nms-expeditions-online/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/BonzTM/nms-expeditions-online)](https://github.com/BonzTM/nms-expeditions-online/releases/latest)
+
 Play any old No Man's Sky expedition **online with full multiplayer** — see other players, visit the Anomaly, and play with friends.
 
 This tool acts as a local proxy that intercepts the game's expedition/season data and replaces it with the expedition of your choice, while leaving all other game traffic (multiplayer, discovery services, bases) completely untouched.
