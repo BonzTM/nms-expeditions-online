@@ -170,42 +170,7 @@ Multiplayer uses Steam's networking and should work regardless. If you don't see
 
 ## How It Works (Technical Details)
 
-```mermaid
-flowchart LR
-    NMS["No Man's Sky"]
-
-    subgraph localhost["Local Machine"]
-        direction TB
-        Hosts["hosts file<br/>*.nomanssky.com → 127.0.0.1"]
-        Proxy["NMS Expeditions<br/>Online Proxy<br/><i>:443</i>"]
-        CRL["CRL Server<br/><i>:18625</i><br/><small>(Windows only)</small>"]
-        JSON["SEASON_DATA<br/>_CACHE.JSON"]
-    end
-
-    subgraph HG["Hello Games Servers"]
-        Auth["Auth Server<br/>merged-nms-auth"]
-        Static["Static Server<br/>merged-nms-static"]
-        Disc["Discovery Server<br/>merged-nms-discovery"]
-    end
-
-    NMS -- "DNS lookup<br/>redirected by<br/>hosts file" --> Hosts
-    Hosts -.-> Proxy
-    NMS -- "HTTPS :443" --> Proxy
-
-    Proxy -- "POST /Steam<br/><b>patches seasonData</b>" --> Auth
-    Auth -- response --> Proxy
-
-    Proxy -. "POST /season<br/><b>intercepted</b>" .-> JSON
-    JSON -. "custom expedition<br/>JSON returned" .-> Proxy
-
-    Proxy -- "all other requests<br/>forwarded unmodified" --> Disc
-
-    Proxy -- "revocation check<br/>(Windows)" --> CRL
-
-    style JSON fill:#2d6a2e,stroke:#333,color:#fff
-    style Proxy fill:#1a5276,stroke:#333,color:#fff
-    style CRL fill:#1a5276,stroke:#333,color:#fff
-```
+![Architecture Diagram](docs/architecture.png)
 
 **Traffic flow:**
 
