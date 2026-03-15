@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-if [ "$EUID" -ne 0 ]; then
-    echo "This tool requires root privileges (hosts file + port 443)."
-    echo "Re-running with sudo..."
-    exec sudo -E "$0" "$@"
-fi
-
 # Check for Python 3.10+
 if ! command -v python3 &>/dev/null; then
     echo "ERROR: Python 3 is not installed."
@@ -23,12 +17,28 @@ if [ "$PYTHON_VERSION" -lt 10 ]; then
     exit 1
 fi
 
-# Install cryptography if missing
+# Install cryptography as the current (non-root) user BEFORE elevating.
+# Running pip as root with a preserved environment is a security risk.
 if ! python3 -c "import cryptography" &>/dev/null; then
     echo "Installing required package: cryptography..."
     pip3 install cryptography
 fi
 
-# Run the app
+# Verify the dependency is importable
+if ! python3 -c "import cryptography" &>/dev/null; then
+    echo "ERROR: Failed to install cryptography. Install it manually:"
+    echo "  pip3 install cryptography"
+    exit 1
+fi
+
 cd "$(dirname "$0")"
+
+# Elevate to root only for running the app (needs hosts file + port 443).
+# Use plain sudo without -E to avoid inheriting pip/env configuration.
+if [ "$EUID" -ne 0 ]; then
+    echo "This tool requires root privileges (hosts file + port 443)."
+    echo "Re-running with sudo..."
+    exec sudo python3 -m nms_expeditions_online
+fi
+
 python3 -m nms_expeditions_online
