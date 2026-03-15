@@ -170,7 +170,7 @@ Multiplayer uses Steam's networking and should work regardless. If you don't see
 
 ## How It Works (Technical Details)
 
-![Architecture Diagram](docs/architecture.png)
+![Architecture Diagram](docs/NMS-detailed-dark.excalidraw.png)
 
 **Traffic flow:**
 
