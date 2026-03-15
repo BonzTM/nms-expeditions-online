@@ -25,6 +25,8 @@ See the README.md for detailed instructions.
 
 ---
 
+## {VERSION}
+
 ## What's New
 
 <!-- New features, capabilities, or user-facing additions. -->
