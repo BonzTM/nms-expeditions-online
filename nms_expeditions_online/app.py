@@ -2,17 +2,15 @@
 
 import glob
 import os
-import sys
 
-from nms_expeditions_online.platform_utils import require_admin, get_app_dir
 from nms_expeditions_online import hosts
 from nms_expeditions_online import proxy as proxy_module
-
+from nms_expeditions_online.platform_utils import get_app_dir, require_admin
 
 EXPEDITION_FILENAME = "SEASON_DATA_CACHE.JSON"
 
 
-def clear_screen():
+def clear_screen() -> None:
     os.system("cls" if os.name == "nt" else "clear")
 
 
@@ -59,14 +57,14 @@ def get_expedition_info(path: str) -> dict | None:
         return None
 
 
-def print_header():
+def print_header() -> None:
     print("=" * 50)
     print("   NMS Expeditions Online")
     print("=" * 50)
     print()
 
 
-def print_status():
+def print_status() -> None:
     installed = hosts.is_installed()
     print(f"  Hosts file: {'INSTALLED' if installed else 'Not installed'}")
 
@@ -78,12 +76,12 @@ def print_status():
         else:
             print(f"  Expedition:  {os.path.basename(exp_file)} (could not read)")
     else:
-        print(f"  Expedition:  No JSON file found")
+        print("  Expedition:  No JSON file found")
 
     print()
 
 
-def do_install():
+def do_install() -> None:
     clear_screen()
     print_header()
     print("--- Install ---\n")
@@ -94,7 +92,7 @@ def do_install():
         print("No expedition JSON file found!\n")
         print("Download your expedition from:")
         print("  https://cwmonkey.github.io/nms-expeditions/\n")
-        print(f"Place the downloaded SEASON_DATA_CACHE.JSON file in:")
+        print("Place the downloaded SEASON_DATA_CACHE.JSON file in:")
         print(f"  {app_dir}\n")
         input("Press Enter to return to menu...")
         return
@@ -132,7 +130,7 @@ def do_install():
     input("\nPress Enter to return to menu...")
 
 
-def do_uninstall():
+def do_uninstall() -> None:
     clear_screen()
     print_header()
     print("--- Uninstall ---\n")
@@ -168,7 +166,7 @@ def do_uninstall():
     input("\nPress Enter to return to menu...")
 
 
-def do_run():
+def do_run() -> None:
     clear_screen()
     print_header()
     print("--- Start Proxy ---\n")
@@ -244,7 +242,7 @@ def do_run():
     input("Press Enter to return to menu...")
 
 
-def main():
+def main() -> None:
     require_admin()
 
     while True:

@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from nms_expeditions_online.dns_resolve import resolve_all
+from nms_expeditions_online.platform_utils import _system32_path
 
 _ca_key = None
 _ca_cert = None
@@ -26,8 +27,13 @@ _sni_map: dict[int, str] = {}
 CRL_PORT = 18625
 REAL_IPS: dict[str, str] = {}
 
+# Safety limits to prevent resource exhaustion
+MAX_HEADER_SIZE = 64 * 1024       # 64 KB max for HTTP headers
+MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB max for HTTP body
+MAX_CONNECTIONS = 32               # max concurrent client connections
 
-def init_ca():
+
+def init_ca() -> None:
     """Generate an ephemeral CA certificate and CRL (in-memory only)."""
     global _ca_key, _ca_cert, _ca_crl_der
     _ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -71,7 +77,7 @@ def install_ca_cert() -> bool:
         tf.close()
         try:
             result = subprocess.run(
-                ["certutil", "-addstore", "-f", "Root", tf.name],
+                [_system32_path("certutil.exe"), "-addstore", "-f", "Root", tf.name],
                 capture_output=True, text=True,
             )
             return result.returncode == 0
@@ -83,11 +89,11 @@ def install_ca_cert() -> bool:
         return True
 
 
-def uninstall_ca_cert():
+def uninstall_ca_cert() -> None:
     """Remove the CA cert from the OS trust store."""
     if platform.system() == "Windows":
         subprocess.run(
-            ["certutil", "-delstore", "Root", CA_CERT_NAME],
+            [_system32_path("certutil.exe"), "-delstore", "Root", CA_CERT_NAME],
             capture_output=True, text=True,
         )
 
@@ -118,14 +124,17 @@ def _make_server_cert() -> tuple[str, str]:
         .sign(_ca_key, hashes.SHA256())
     )
     cf = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
-    cf.write(cert.public_bytes(serialization.Encoding.PEM)); cf.close()
+    cf.write(cert.public_bytes(serialization.Encoding.PEM))
+    cf.close()
     kf = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
     kf.write(key.private_bytes(
-        serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption())); kf.close()
+        serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption(),
+    ))
+    kf.close()
     return cf.name, kf.name
 
 
-def _sni_hostname_callback(ssl_socket, hostname, _ctx):
+def _sni_hostname_callback(ssl_socket: ssl.SSLSocket, hostname: str | None, _ctx: ssl.SSLContext) -> None:
     """Extract the SNI hostname without switching contexts."""
     if hostname:
         _sni_map[id(ssl_socket)] = hostname
@@ -134,14 +143,14 @@ def _sni_hostname_callback(ssl_socket, hostname, _ctx):
 class _CRLHandler(http.server.BaseHTTPRequestHandler):
     """Serves the CA's CRL for SChannel revocation checks."""
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "application/pkix-crl")
         self.send_header("Content-Length", str(len(_ca_crl_der)))
         self.end_headers()
         self.wfile.write(_ca_crl_der)
 
-    def log_message(self, format, *args):
+    def log_message(self, format: str, *args: object) -> None:
         pass  # suppress request logging
 
 
@@ -174,6 +183,8 @@ def read_http_sync(sock) -> bytes:
         if not chunk:
             return buf
         buf += chunk
+        if len(buf) > MAX_HEADER_SIZE:
+            raise ValueError(f"HTTP headers exceed {MAX_HEADER_SIZE} bytes")
 
     hdr_end = buf.index(b"\r\n\r\n") + 4
     headers = buf[:hdr_end]
@@ -183,6 +194,8 @@ def read_http_sync(sock) -> bytes:
     for line in hdrs_lower.split("\r\n"):
         if line.startswith("content-length:"):
             cl = int(line.split(":", 1)[1].strip())
+            if cl > MAX_BODY_SIZE:
+                raise ValueError(f"Content-Length {cl} exceeds {MAX_BODY_SIZE} bytes")
             remaining = cl - len(body)
             if remaining > 0:
                 body += _recv_all(sock, remaining)
@@ -194,6 +207,8 @@ def read_http_sync(sock) -> bytes:
             if not chunk:
                 break
             body += chunk
+            if len(body) > MAX_BODY_SIZE:
+                raise ValueError(f"Chunked body exceeds {MAX_BODY_SIZE} bytes")
         while not body.endswith(b"\r\n\r\n"):
             chunk = sock.recv(8192)
             if not chunk:
@@ -208,10 +223,12 @@ def decode_chunked(data: bytes) -> bytes:
     result, pos = b"", 0
     while pos < len(data):
         end = data.find(b"\r\n", pos)
-        if end < 0: break
+        if end < 0:
+            break
         size_str = data[pos:end].decode("ascii", errors="replace").split(";")[0].strip()
         size = int(size_str, 16)
-        if size == 0: break
+        if size == 0:
+            break
         pos = end + 2
         result += data[pos:pos + size]
         pos += size + 2
@@ -224,9 +241,9 @@ def rebuild_response(headers: bytes, body: bytes, force_200: bool = False) -> by
         parts = lines[0].split(" ", 2)
         if len(parts) >= 2:
             lines[0] = f"{parts[0]} 200 OK"
-    out = [l for l in lines if not l.lower().startswith(("content-length:", "transfer-encoding:"))]
+    out = [ln for ln in lines if not ln.lower().startswith(("content-length:", "transfer-encoding:"))]
     out.append(f"Content-Length: {len(body)}")
-    if force_200 and not any(l.lower().startswith("content-type:") for l in out):
+    if force_200 and not any(ln.lower().startswith("content-type:") for ln in out):
         out.insert(1, "Content-Type: application/json; charset=utf-8")
     return "\r\n".join(out).encode() + b"\r\n\r\n" + body
 
@@ -267,7 +284,7 @@ class NMSProxy:
                 print(f"  [ERROR] Auth patch: {e}")
         return None
 
-    def handle(self, client_ssl, hostname: str):
+    def handle(self, client_ssl: ssl.SSLSocket, hostname: str) -> None:
         """Handle a single client connection (blocking, runs in its own thread)."""
         real_ip = REAL_IPS[hostname]
 
@@ -323,8 +340,11 @@ class NMSProxy:
                 pass
 
 
+_conn_semaphore = threading.Semaphore(MAX_CONNECTIONS)
+
+
 def _accept_loop(proxy: NMSProxy, srv_sock: socket.socket, ctx: ssl.SSLContext,
-                 stop_event: threading.Event):
+                 stop_event: threading.Event) -> None:
     """Accept loop: each connection gets its own thread for blocking I/O."""
     while not stop_event.is_set():
         try:
@@ -334,35 +354,43 @@ def _accept_loop(proxy: NMSProxy, srv_sock: socket.socket, ctx: ssl.SSLContext,
         except OSError:
             break
 
+        if not _conn_semaphore.acquire(blocking=False):
+            print(f"  [WARN] Max connections ({MAX_CONNECTIONS}) reached, rejecting {addr}")
+            client_sock.close()
+            continue
+
         t = threading.Thread(target=_handle_client, args=(proxy, client_sock, addr, ctx),
                              daemon=True)
         t.start()
 
 
-def _handle_client(proxy: NMSProxy, client_sock: socket.socket, addr, ctx: ssl.SSLContext):
+def _handle_client(proxy: NMSProxy, client_sock: socket.socket, addr: tuple, ctx: ssl.SSLContext) -> None:
     """TLS handshake + proxy, all blocking in a dedicated thread."""
-    client_sock.settimeout(30)
     try:
-        client_ssl = ctx.wrap_socket(client_sock, server_side=True)
-    except ssl.SSLError as e:
-        print(f"  [TLS ERROR] {e} (from {addr})")
-        client_sock.close()
-        return
-    except Exception as e:
-        print(f"  [CONN ERROR] {type(e).__name__}: {e} (from {addr})")
-        client_sock.close()
-        return
+        client_sock.settimeout(30)
+        try:
+            client_ssl = ctx.wrap_socket(client_sock, server_side=True)
+        except ssl.SSLError as e:
+            print(f"  [TLS ERROR] {e} (from {addr})")
+            client_sock.close()
+            return
+        except Exception as e:
+            print(f"  [CONN ERROR] {type(e).__name__}: {e} (from {addr})")
+            client_sock.close()
+            return
 
-    hostname = _sni_map.pop(id(client_ssl), None)
-    if not hostname or hostname not in REAL_IPS:
-        if not hostname:
-            print("  [WARN] Connection with no SNI hostname, closing")
-        else:
-            print(f"  [WARN] Unknown hostname '{hostname}', closing")
-        client_ssl.close()
-        return
+        hostname = _sni_map.pop(id(client_ssl), None)
+        if not hostname or hostname not in REAL_IPS:
+            if not hostname:
+                print("  [WARN] Connection with no SNI hostname, closing")
+            else:
+                print(f"  [WARN] Unknown hostname '{hostname}', closing")
+            client_ssl.close()
+            return
 
-    proxy.handle(client_ssl, hostname)
+        proxy.handle(client_ssl, hostname)
+    finally:
+        _conn_semaphore.release()
 
 
 def verify_proxy(port: int = 443) -> list[str]:
@@ -419,7 +447,9 @@ def verify_proxy(port: int = 443) -> list[str]:
     return problems
 
 
-def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread, threading.Event, http.server.HTTPServer | None]:
+def start_proxy(
+    expedition_path: str, port: int = 443,
+) -> tuple[threading.Thread, threading.Event, http.server.HTTPServer | None]:
     """Start the proxy in a background thread. Returns (thread, stop_event, crl_server)."""
     global REAL_IPS
 
@@ -443,7 +473,7 @@ def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread
     srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        srv_sock.bind(("0.0.0.0", port))
+        srv_sock.bind(("127.0.0.1", port))
     except OSError as e:
         if e.errno in (98, 10048) or "address already in use" in str(e).lower():
             print(f"\nERROR: Port {port} is already in use.")

@@ -1,8 +1,10 @@
 """Hosts file management — install/uninstall NMS server redirects."""
 
+import os
 import subprocess
+import tempfile
 
-from nms_expeditions_online.platform_utils import get_hosts_path, is_windows
+from nms_expeditions_online.platform_utils import _system32_path, get_hosts_path, is_windows
 
 SENTINEL_START = "# NMS-EXPEDITIONS-ONLINE-START"
 SENTINEL_END = "# NMS-EXPEDITIONS-ONLINE-END"
@@ -15,6 +17,28 @@ HOSTS_ENTRIES = [
 ]
 
 
+def _atomic_write(path: str, content: str) -> None:
+    """Write to a file atomically using temp file + rename.
+
+    This prevents corruption from concurrent edits or interrupted writes.
+    The temp file is created in the same directory so os.replace() is atomic
+    on the same filesystem.
+    """
+    dir_name = os.path.dirname(path)
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix=".hosts_tmp_")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp_path, path)
+    except BaseException:
+        # Clean up the temp file if rename failed
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def is_installed() -> bool:
     """Check if the hosts file has our entries."""
     try:
@@ -24,12 +48,12 @@ def is_installed() -> bool:
         return False
 
 
-def _flush_dns_cache():
+def _flush_dns_cache() -> None:
     """Flush the system DNS cache so hosts file changes take effect immediately."""
     if is_windows():
         try:
             subprocess.run(
-                ["ipconfig", "/flushdns"],
+                [_system32_path("ipconfig.exe"), "/flushdns"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -60,8 +84,7 @@ def install() -> str | None:
     content += block + "\n"
 
     try:
-        with open(hosts_path, "w") as f:
-            f.write(content)
+        _atomic_write(hosts_path, content)
     except PermissionError:
         return "Permission denied writing hosts file. Run as administrator."
 
@@ -100,8 +123,7 @@ def uninstall() -> str | None:
     content = "".join(new_lines).rstrip("\n") + "\n"
 
     try:
-        with open(hosts_path, "w") as f:
-            f.write(content)
+        _atomic_write(hosts_path, content)
     except PermissionError:
         return "Permission denied writing hosts file. Run as administrator."
 

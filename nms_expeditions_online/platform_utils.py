@@ -7,6 +7,12 @@ def is_windows() -> bool:
     return platform.system() == "Windows"
 
 
+def _system32_path(exe_name: str) -> str:
+    """Return the full path to an executable in System32, avoiding search-order hijacking."""
+    system_root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+    return os.path.join(system_root, "System32", exe_name)
+
+
 def is_admin() -> bool:
     if is_windows():
         import ctypes
@@ -14,7 +20,7 @@ def is_admin() -> bool:
     return os.getuid() == 0
 
 
-def require_admin():
+def require_admin() -> None:
     if is_admin():
         return
     if is_windows():
