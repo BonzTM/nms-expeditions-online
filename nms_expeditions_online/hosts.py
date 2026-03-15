@@ -1,6 +1,8 @@
 """Hosts file management — install/uninstall NMS server redirects."""
 
-from nms_expeditions_online.platform_utils import get_hosts_path
+import subprocess
+
+from nms_expeditions_online.platform_utils import get_hosts_path, is_windows
 
 SENTINEL_START = "# NMS-EXPEDITIONS-ONLINE-START"
 SENTINEL_END = "# NMS-EXPEDITIONS-ONLINE-END"
@@ -20,6 +22,19 @@ def is_installed() -> bool:
             return SENTINEL_START in f.read()
     except Exception:
         return False
+
+
+def _flush_dns_cache():
+    """Flush the system DNS cache so hosts file changes take effect immediately."""
+    if is_windows():
+        try:
+            subprocess.run(
+                ["ipconfig", "/flushdns"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
 
 
 def install() -> str | None:
@@ -50,6 +65,7 @@ def install() -> str | None:
     except PermissionError:
         return "Permission denied writing hosts file. Run as administrator."
 
+    _flush_dns_cache()
     return None
 
 
@@ -89,4 +105,5 @@ def uninstall() -> str | None:
     except PermissionError:
         return "Permission denied writing hosts file. Run as administrator."
 
+    _flush_dns_cache()
     return None

@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import json
 import os
+import platform
 import ssl
 import tempfile
 import threading
@@ -326,6 +327,11 @@ def start_proxy(expedition_path: str, port: int = 443) -> tuple[threading.Thread
 
     def run():
         try:
+            # On Windows the default ProactorEventLoop does not support
+            # loop.start_tls() which is required for the TLS handshake
+            # upgrade.  Force the SelectorEventLoop so the proxy works.
+            if platform.system() == "Windows":
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             asyncio.run(_run_server(proxy, port, stop_event))
         except OSError as e:
             if "address already in use" in str(e).lower() or e.errno == 98 or e.errno == 10048:
