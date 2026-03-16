@@ -186,7 +186,12 @@ None of this applies on Linux — Proton/Wine's TLS implementation does not perf
 
 ## How It Works (Technical Details)
 
-![Architecture Diagram](docs/architecture/NMS-detailed-dark.excalidraw.png)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture/NMS-detailed-dark.excalidraw.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/architecture/NMS-detailed.excalidraw.png">
+  <img alt="architecture diagram" src="ddocs/architecture/NMS-detailed.excalidraw.png">
+</picture>
 
 **Traffic flow:**
 
